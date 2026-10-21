@@ -5,14 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Taksi</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
-  body { font-family: sans-serif; margin: 0; padding: 24px;
-         background: #fff; color: #111; text-align: center; }
-  h1 { margin-top: 60px; }
-  button { display: block; width: 100%; padding: 18px; margin: 16px 0;
-           font-size: 18px; border: none; border-radius: 12px;
-           background: #ffcc00; color: #111; }
+  body { font-family: sans-serif; margin: 0; background: #fff;
+         color: #111; text-align: center; }
+  #choose { padding: 24px; }
+  h1 { margin: 60px 0 20px; }
+  button { display: block; width: calc(100% - 32px); padding: 16px;
+           margin: 12px 16px; font-size: 18px; border: none;
+           border-radius: 12px; background: #ffcc00; color: #111; }
   #screen { display: none; }
+  #screen h1 { margin: 12px 0; font-size: 20px; }
+  #map { height: 65vh; width: 100%; }
+  #status { padding: 8px; font-size: 14px; color: #555; }
 </style>
 </head>
 <body>
@@ -24,7 +30,8 @@
   </div>
   <div id="screen">
     <h1 id="title"></h1>
-    <p>Xarita keyingi qadamda qo’shiladi.</p>
+    <div id="map"></div>
+    <div id="status">Joylashuv aniqlanmoqda...</div>
     <button onclick="resetRole()">Rolni o’zgartirish</button>
   </div>
 <script>
@@ -33,11 +40,16 @@
   const user = tg.initDataUnsafe.user;
   if (user) document.getElementById('name').textContent = user.first_name;
 
+  let map, me, taxis = [], started = false;
+  let center = [41.311, 69.279];
+
   function show(role) {
     document.getElementById('choose').style.display = 'none';
     document.getElementById('screen').style.display = 'block';
     document.getElementById('title').textContent =
       role === 'taksist' ? '🚕 Taksist bo’limi' : '🧍 Yo’lovchi bo’limi';
+    if (!started) { started = true; startMap(); }
+    else setTimeout(() => map.invalidateSize(), 100);
   }
   function pick(role) { localStorage.setItem('role', role); show(role); }
   function resetRole() {
@@ -45,6 +57,49 @@
     document.getElementById('screen').style.display = 'none';
     document.getElementById('choose').style.display = 'block';
   }
+
+  function startMap() {
+    map = L.map('map').setView(center, 15);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    me = L.marker(center).addTo(map).bindPopup('Siz shu yerdasiz');
+    if (!navigator.geolocation) {
+      document.getElementById('status').textContent = 'Joylashuv qo’llab-quvvatlanmaydi';
+      return;
+    }
+    navigator.geolocation.watchPosition(onPos, onErr,
+      { enableHighAccuracy: true });
+  }
+
+  function onPos(p) {
+    center = [p.coords.latitude, p.coords.longitude];
+    me.setLatLng(center);
+    if (taxis.length === 0) { map.setView(center, 16); makeTaxis(); }
+    document.getElementById('status').textContent =
+      'Yaqin atrofda ' + taxis.length + ' ta taksi (demo)';
+  }
+  function onErr() {
+    document.getElementById('status').textContent =
+      'Joylashuvga ruxsat bering (Telegram yoki telefon sozlamalarida)';
+  }
+
+  function makeTaxis() {
+    const icon = L.divIcon({ html: '<div style="font-size:26px">🚕</div>',
+      className: '', iconSize: [30, 30] });
+    for (let i = 0; i < 5; i++) {
+      const pos = [center[0] + (Math.random() - 0.5) * 0.01,
+                   center[1] + (Math.random() - 0.5) * 0.01];
+      taxis.push(L.marker(pos, { icon: icon }).addTo(map));
+    }
+    setInterval(() => {
+      taxis.forEach(t => {
+        const a = t.getLatLng();
+        t.setLatLng([a.lat + (Math.random() - 0.5) * 0.0004,
+                     a.lng + (Math.random() - 0.5) * 0.0004]);
+      });
+    }, 3000);
+  }
+
   const saved = localStorage.getItem('role');
   if (saved) show(saved);
 </script>
