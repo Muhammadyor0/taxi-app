@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taksi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 24px;
+         background: #fff; color: #111; text-align: center; }
+  h1 { margin-top: 60px; }
+  button { display: block; width: 100%; padding: 18px; margin: 16px 0;
+           font-size: 18px; border: none; border-radius: 12px;
+           background: #ffcc00; color: #111; }
+  #screen { display: none; }
+</style>
+</head>
+<body>
+  <div id="choose">
+    <h1>Xush kelibsiz!</h1>
+    <p id="name"></p>
+    <button onclick="pick('yolovchi')">🧍 Men yo’lovchiman</button>
+    <button onclick="pick('taksist')">🚕 Men taksistman</button>
+  </div>
+  <div id="screen">
+    <h1 id="title"></h1>
+    <p>Xarita keyingi qadamda qo’shiladi.</p>
+    <button onclick="resetRole()">Rolni o’zgartirish</button>
+  </div>
+<script>
+  const tg = window.Telegram.WebApp;
+  tg.ready(); tg.expand();
+  const user = tg.initDataUnsafe.user;
+  if (user) document.getElementById('name').textContent = user.first_name;
+
+  function show(role) {
+    document.getElementById('choose').style.display = 'none';
+    document.getElementById('screen').style.display = 'block';
+    document.getElementById('title').textContent =
+      role === 'taksist' ? '🚕 Taksist bo’limi' : '🧍 Yo’lovchi bo’limi';
+  }
+  function pick(role) { localStorage.setItem('role', role); show(role); }
+  function resetRole() {
+    localStorage.removeItem('role');
+    document.getElementById('screen').style.display = 'none';
+    document.getElementById('choose').style.display = 'block';
+  }
+  const saved = localStorage.getItem('role');
+  if (saved) show(saved);
+</script>
+</body>
+</html>
