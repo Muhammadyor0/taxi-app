@@ -13,13 +13,16 @@
   #choose { padding: 24px; }
   h1 { margin: 60px 0 20px; }
   button { display: block; width: calc(100% - 32px); padding: 16px;
-           margin: 12px 16px; font-size: 18px; border: none;
+           margin: 10px 16px; font-size: 18px; border: none;
            border-radius: 12px; background: #ffcc00; color: #111; }
   #screen { display: none; }
   #screen h1 { margin: 12px 0; font-size: 20px; }
-  #map { height: 60vh; width: 100%; }
-  #status { padding: 8px; font-size: 14px; color: #555; }
-  #toggle { display: none; background: #2ecc71; }
+  #map { height: 52vh; width: 100%; }
+  #status { padding: 8px; font-size: 15px; color: #333; }
+  #toggle, #order, #accept, #finish { display: none; }
+  #toggle { background: #2ecc71; }
+  #accept { background: #2ecc71; }
+  #finish { background: #3498db; color: #fff; }
 </style>
 </head>
 <body>
@@ -33,7 +36,10 @@
     <h1 id="title"></h1>
     <div id="map"></div>
     <div id="status">Joylashuv aniqlanmoqda...</div>
+    <button id="order" onclick="toggleOrder()">🚕 Taksi chaqirish</button>
     <button id="toggle" onclick="toggleOnline()">Liniyaga chiqish</button>
+    <button id="accept" onclick="acceptOrder()">✅ Buyurtmani qabul qilish</button>
+    <button id="finish" onclick="finishOrder()">🏁 Safarni yakunlash</button>
     <button onclick="resetRole()">Rolni o’zgartirish</button>
   </div>
 <script>
@@ -48,33 +54,60 @@
   localStorage.setItem('uid', myId);
 
   let map, me, started = false, role = null, online = false, hasPos = false;
+  let ordering = false, offerId = null, activeId = null, pMarker = null;
   let center = [41.311, 69.279];
   const markers = {};
   const taxiIcon = L.divIcon({ html: '<div style="font-size:26px">🚕</div>',
     className: '', iconSize: [30, 30] });
+  const paxIcon = L.divIcon({ html: '<div style="font-size:26px">🧍</div>',
+    className: '', iconSize: [30, 30] });
 
-  function setStatus(t) { document.getElementById('status').textContent = t; }
+  function $(id) { return document.getElementById(id); }
+  function setStatus(t) { $('status').textContent = t; }
+
+  function dist(a, b, c, d) {
+    const R = 6371, r = Math.PI / 180;
+    const x = (c - a) * r, y = (d - b) * r;
+    const h = Math.sin(x / 2) ** 2 +
+      Math.cos(a * r) * Math.cos(c * r) * Math.sin(y / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  function updateUI() {
+    $('order').style.display = role === 'yolovchi' ? 'block' : 'none';
+    $('order').textContent = ordering ? '❌ Buyurtmani bekor qilish' : '🚕 Taksi chaqirish';
+    $('order').style.background = ordering ? '#e74c3c' : '#ffcc00';
+    $('toggle').style.display = role === 'taksist' ? 'block' : 'none';
+    $('accept').style.display =
+      (role === 'taksist' && online && !activeId && offerId) ? 'block' : 'none';
+    $('finish').style.display = (role === 'taksist' && activeId) ? 'block' : 'none';
+  }
 
   function show(r) {
     role = r;
-    document.getElementById('choose').style.display = 'none';
-    document.getElementById('screen').style.display = 'block';
-    document.getElementById('title').textContent =
-      r === 'taksist' ? '🚕 Taksist bo’limi' : '🧍 Yo’lovchi bo’limi';
-    document.getElementById('toggle').style.display =
-      r === 'taksist' ? 'block' : 'none';
+    $('choose').style.display = 'none';
+    $('screen').style.display = 'block';
+    $('title').textContent = r === 'taksist' ? '🚕 Taksist bo’limi' : '🧍 Yo’lovchi bo’limi';
     setStatus(r === 'taksist' ? 'Liniyaga chiqish tugmasini bosing' : 'Taksilar qidirilmoqda...');
+    updateUI();
     if (!started) { started = true; startMap(); }
     else setTimeout(() => map.invalidateSize(), 100);
   }
   function pick(r) { show(r); }
 
+  function clearMarkers() {
+    Object.keys(markers).forEach(k => { map.removeLayer(markers[k]); delete markers[k]; });
+    if (pMarker) { map.removeLayer(pMarker); pMarker = null; }
+  }
+
   function resetRole() {
     if (online) toggleOnline();
-    role = null;
-    Object.keys(markers).forEach(k => { map.removeLayer(markers[k]); delete markers[k]; });
-    document.getElementById('screen').style.display = 'none';
-    document.getElementById('choose').style.display = 'block';
+    if (ordering) toggleOrder();
+    role = null; offerId = null; activeId = null;
+    clearMarkers();
+    $('screen').style.display = 'none';
+    $('choose').style.display = 'block';
+    updateUI();
   }
 
   function startMap() {
@@ -94,18 +127,21 @@
   }
   function onErr() { setStatus('Joylashuvga ruxsat bering (telefon sozlamalarida)'); }
 
+  /* ---------- TAKSIST ---------- */
   function toggleOnline() {
     online = !online;
-    const b = document.getElementById('toggle');
+    const b = $('toggle');
     if (online) {
       b.textContent = 'Liniyadan chiqish'; b.style.background = '#e74c3c';
-      setStatus('Siz liniyadasiz. Yo’lovchilar sizni ko’radi.');
+      setStatus('Siz liniyadasiz. Buyurtmalar kutilmoqda...');
       sendPos();
     } else {
       b.textContent = 'Liniyaga chiqish'; b.style.background = '#2ecc71';
       setStatus('Siz liniyadan chiqdingiz');
+      offerId = null;
       fetch(DB + '/taxis/' + myId + '.json', { method: 'DELETE' }).catch(() => {});
     }
+    updateUI();
   }
 
   function sendPos() {
@@ -116,9 +152,110 @@
     }).catch(() => {});
   }
 
-  function tick() {
-    if (role === 'taksist' && online) sendPos();
-    if (role === 'yolovchi') loadTaxis();
+  function showPax(lat, lng) {
+    if (pMarker) pMarker.setLatLng([lat, lng]);
+    else pMarker = L.marker([lat, lng], { icon: paxIcon }).addTo(map);
+  }
+  function hidePax() { if (pMarker) { map.removeLayer(pMarker); pMarker = null; } }
+
+  function loadOrders() {
+    if (activeId) {
+      fetch(DB + '/orders/' + activeId + '.json').then(r => r.json()).then(o => {
+        if (!o) {
+          activeId = null; hidePax();
+          setStatus('Yo’lovchi buyurtmani bekor qildi');
+          updateUI();
+        } else {
+          showPax(o.lat, o.lng);
+          const km = dist(center[0], center[1], o.lat, o.lng);
+          setStatus('Yo’lovchiga boring (' + km.toFixed(1) + ' km)');
+        }
+      }).catch(() => {});
+      return;
+    }
+    fetch(DB + '/orders.json').then(r => r.json()).then(data => {
+      data = data || {};
+      let best = null, bestKm = 5;
+      Object.keys(data).forEach(id => {
+        const o = data[id];
+        if (!o || o.status !== 'waiting' || Date.now() - o.t > 600000) return;
+        const km = dist(center[0], center[1], o.lat, o.lng);
+        if (km < bestKm) { bestKm = km; best = id; }
+      });
+      if (best) {
+        offerId = best;
+        showPax(data[best].lat, data[best].lng);
+        setStatus('🔔 Yangi buyurtma, ' + bestKm.toFixed(1) + ' km uzoqlikda');
+      } else {
+        offerId = null; hidePax();
+        setStatus('Siz liniyadasiz. Buyurtmalar kutilmoqda...');
+      }
+      updateUI();
+    }).catch(() => setStatus('Serverga ulanib bo’lmadi'));
+  }
+
+  function acceptOrder() {
+    const id = offerId;
+    if (!id) return;
+    fetch(DB + '/orders/' + id + '.json').then(r => r.json()).then(o => {
+      if (!o || o.status !== 'waiting') {
+        setStatus('Bu buyurtmani boshqa taksist oldi');
+        offerId = null; hidePax(); updateUI(); return;
+      }
+      return fetch(DB + '/orders/' + id + '.json', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'accepted', did: myId })
+      }).then(() => {
+        activeId = id; offerId = null;
+        setStatus('Buyurtma qabul qilindi!');
+        updateUI();
+      });
+    }).catch(() => setStatus('Xatolik, qayta urinib ko’ring'));
+  }
+
+  function finishOrder() {
+    if (!activeId) return;
+    fetch(DB + '/orders/' + activeId + '.json', { method: 'DELETE' }).catch(() => {});
+    activeId = null; hidePax();
+    setStatus('Safar yakunlandi. Yangi buyurtmalar kutilmoqda...');
+    updateUI();
+  }
+
+  /* ---------- YO'LOVCHI ---------- */
+  function toggleOrder() {
+    if (!ordering) {
+      if (!hasPos) { setStatus('Avval joylashuv aniqlansin'); return; }
+      fetch(DB + '/orders/' + myId + '.json', {
+        method: 'PUT',
+        body: JSON.stringify({ lat: center[0], lng: center[1],
+                               status: 'waiting', did: null, t: Date.now() })
+      }).then(() => {
+        ordering = true;
+        setStatus('Taksi qidirilmoqda...');
+        updateUI();
+      }).catch(() => setStatus('Serverga ulanib bo’lmadi'));
+    } else {
+      fetch(DB + '/orders/' + myId + '.json', { method: 'DELETE' }).catch(() => {});
+      ordering = false;
+      setStatus('Buyurtma bekor qilindi');
+      updateUI();
+    }
+  }
+
+  function checkMyOrder() {
+    if (!ordering) return;
+    fetch(DB + '/orders/' + myId + '.json').then(r => r.json()).then(o => {
+      if (!ordering) return;
+      if (!o) {
+        ordering = false;
+        setStatus('Safar yakunlandi. Rahmat! 🙌');
+        updateUI();
+      } else if (o.status === 'accepted') {
+        setStatus('🚕 Taksi yo’lda! Xaritada kuzating.');
+      } else {
+        setStatus('Taksi qidirilmoqda...');
+      }
+    }).catch(() => {});
   }
 
   function loadTaxis() {
@@ -138,8 +275,13 @@
         if (markers[id]) markers[id].setLatLng(pos);
         else markers[id] = L.marker(pos, { icon: taxiIcon }).addTo(map);
       });
-      setStatus('Yaqin atrofda ' + Object.keys(alive).length + ' ta taksi');
+      if (!ordering) setStatus('Yaqin atrofda ' + Object.keys(alive).length + ' ta taksi');
     }).catch(() => setStatus('Serverga ulanib bo’lmadi'));
+  }
+
+  function tick() {
+    if (role === 'taksist' && online) { sendPos(); loadOrders(); }
+    if (role === 'yolovchi') { loadTaxis(); checkMyOrder(); }
   }
 </script>
 </body>
