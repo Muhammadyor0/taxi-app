@@ -17,8 +17,9 @@
            border-radius: 12px; background: #ffcc00; color: #111; }
   #screen { display: none; }
   #screen h1 { margin: 12px 0; font-size: 20px; }
-  #map { height: 65vh; width: 100%; }
+  #map { height: 60vh; width: 100%; }
   #status { padding: 8px; font-size: 14px; color: #555; }
+  #toggle { display: none; background: #2ecc71; }
 </style>
 </head>
 <body>
@@ -32,28 +33,46 @@
     <h1 id="title"></h1>
     <div id="map"></div>
     <div id="status">Joylashuv aniqlanmoqda...</div>
+    <button id="toggle" onclick="toggleOnline()">Liniyaga chiqish</button>
     <button onclick="resetRole()">Rolni o’zgartirish</button>
   </div>
 <script>
+  const DB = 'https://taxi-app-19eb7-default-rtdb.firebaseio.com';
   const tg = window.Telegram.WebApp;
   tg.ready(); tg.expand();
   const user = tg.initDataUnsafe.user;
   if (user) document.getElementById('name').textContent = user.first_name;
 
-  let map, me, taxis = [], started = false;
-  let center = [41.311, 69.279];
+  let myId = user ? 'u' + user.id
+    : (localStorage.getItem('uid') || ('g' + Math.random().toString(36).slice(2, 9)));
+  localStorage.setItem('uid', myId);
 
-  function show(role) {
+  let map, me, started = false, role = null, online = false, hasPos = false;
+  let center = [41.311, 69.279];
+  const markers = {};
+  const taxiIcon = L.divIcon({ html: '<div style="font-size:26px">🚕</div>',
+    className: '', iconSize: [30, 30] });
+
+  function setStatus(t) { document.getElementById('status').textContent = t; }
+
+  function show(r) {
+    role = r;
     document.getElementById('choose').style.display = 'none';
     document.getElementById('screen').style.display = 'block';
     document.getElementById('title').textContent =
-      role === 'taksist' ? '🚕 Taksist bo’limi' : '🧍 Yo’lovchi bo’limi';
+      r === 'taksist' ? '🚕 Taksist bo’limi' : '🧍 Yo’lovchi bo’limi';
+    document.getElementById('toggle').style.display =
+      r === 'taksist' ? 'block' : 'none';
+    setStatus(r === 'taksist' ? 'Liniyaga chiqish tugmasini bosing' : 'Taksilar qidirilmoqda...');
     if (!started) { started = true; startMap(); }
     else setTimeout(() => map.invalidateSize(), 100);
   }
-  function pick(role) { localStorage.setItem('role', role); show(role); }
+  function pick(r) { show(r); }
+
   function resetRole() {
-    localStorage.removeItem('role');
+    if (online) toggleOnline();
+    role = null;
+    Object.keys(markers).forEach(k => { map.removeLayer(markers[k]); delete markers[k]; });
     document.getElementById('screen').style.display = 'none';
     document.getElementById('choose').style.display = 'block';
   }
@@ -63,43 +82,65 @@
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
     me = L.marker(center).addTo(map).bindPopup('Siz shu yerdasiz');
-    if (!navigator.geolocation) {
-      document.getElementById('status').textContent = 'Joylashuv qo’llab-quvvatlanmaydi';
-      return;
-    }
-    navigator.geolocation.watchPosition(onPos, onErr,
-      { enableHighAccuracy: true });
+    if (!navigator.geolocation) { setStatus('Joylashuv qo’llab-quvvatlanmaydi'); return; }
+    navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true });
+    setInterval(tick, 3000);
   }
 
   function onPos(p) {
     center = [p.coords.latitude, p.coords.longitude];
     me.setLatLng(center);
-    if (taxis.length === 0) { map.setView(center, 16); makeTaxis(); }
-    document.getElementById('status').textContent =
-      'Yaqin atrofda ' + taxis.length + ' ta taksi (demo)';
+    if (!hasPos) { hasPos = true; map.setView(center, 16); }
   }
-  function onErr() {
-    document.getElementById('status').textContent =
-      'Joylashuvga ruxsat bering (Telegram yoki telefon sozlamalarida)';
-  }
+  function onErr() { setStatus('Joylashuvga ruxsat bering (telefon sozlamalarida)'); }
 
-  function makeTaxis() {
-    const icon = L.divIcon({ html: '<div style="font-size:26px">🚕</div>',
-      className: '', iconSize: [30, 30] });
-    for (let i = 0; i < 5; i++) {
-      const pos = [center[0] + (Math.random() - 0.5) * 0.01,
-                   center[1] + (Math.random() - 0.5) * 0.01];
-      taxis.push(L.marker(pos, { icon: icon }).addTo(map));
+  function toggleOnline() {
+    online = !online;
+    const b = document.getElementById('toggle');
+    if (online) {
+      b.textContent = 'Liniyadan chiqish'; b.style.background = '#e74c3c';
+      setStatus('Siz liniyadasiz. Yo’lovchilar sizni ko’radi.');
+      sendPos();
+    } else {
+      b.textContent = 'Liniyaga chiqish'; b.style.background = '#2ecc71';
+      setStatus('Siz liniyadan chiqdingiz');
+      fetch(DB + '/taxis/' + myId + '.json', { method: 'DELETE' }).catch(() => {});
     }
-    setInterval(() => {
-      taxis.forEach(t => {
-        const a = t.getLatLng();
-        t.setLatLng([a.lat + (Math.random() - 0.5) * 0.0004,
-                     a.lng + (Math.random() - 0.5) * 0.0004]);
-      });
-    }, 3000);
   }
 
+  function sendPos() {
+    if (!hasPos) return;
+    fetch(DB + '/taxis/' + myId + '.json', {
+      method: 'PUT',
+      body: JSON.stringify({ lat: center[0], lng: center[1], t: Date.now() })
+    }).catch(() => {});
+  }
+
+  function tick() {
+    if (role === 'taksist' && online) sendPos();
+    if (role === 'yolovchi') loadTaxis();
+  }
+
+  function loadTaxis() {
+    fetch(DB + '/taxis.json').then(r => r.json()).then(data => {
+      data = data || {};
+      const now = Date.now();
+      const alive = {};
+      Object.keys(data).forEach(id => {
+        const d = data[id];
+        if (d && now - d.t < 30000) alive[id] = d;
+      });
+      Object.keys(markers).forEach(id => {
+        if (!alive[id]) { map.removeLayer(markers[id]); delete markers[id]; }
+      });
+      Object.keys(alive).forEach(id => {
+        const pos = [alive[id].lat, alive[id].lng];
+        if (markers[id]) markers[id].setLatLng(pos);
+        else markers[id] = L.marker(pos, { icon: taxiIcon }).addTo(map);
+      });
+      setStatus('Yaqin atrofda ' + Object.keys(alive).length + ' ta taksi');
+    }).catch(() => setStatus('Serverga ulanib bo’lmadi'));
+  }
 </script>
 </body>
 </html>
